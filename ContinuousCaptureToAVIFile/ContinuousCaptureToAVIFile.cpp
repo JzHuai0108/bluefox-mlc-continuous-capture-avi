@@ -135,8 +135,14 @@ void setupBlueFOXFrameRate( Device* pDev, int frameRate_Hz, unsigned int exposur
     bfs.triggerSource.write( ctsRTCtrl );
     // when the hardware real time controller switches the trigger signal to
     // high the exposure of the image shall start
-    bfs.triggerMode.write( ctmContinuous ); // The mode was ctmOnRisingEdge 
-    // which caused writing exception with mvBlueFox MLC202DG.
+    string product = pDev->product.read();
+    if (product.find("IGC202dG") != std::string::npos) {
+        bfs.triggerMode.write(ctmContinuous);
+        cerr << "The mode ctmOnRisingEdge caused writing exception with "
+            "mvBlueFox MLC202DG, so ctmContinuous is used." << endl;
+    } else {
+        bfs.triggerMode.write(ctmOnRisingEdge);
+    }
     // In release mode with compression, the maximum FPS of 
     // ContinuousCaptureToAVIFile is a bit more than 10.
     // In comparison, SequenceCapture project uses a RequestProvider
@@ -165,8 +171,7 @@ void setupBlueFOXFrameRate( Device* pDev, int frameRate_Hz, unsigned int exposur
 
     // wait a certain amount of time to achieve the desired frequency
     int progStep = 0;
-    RTCtrProgramStep* pRTCtrlStep = 0;
-    pRTCtrlStep = pRTCtrlprogram->programStep( progStep++ );
+    RTCtrProgramStep* pRTCtrlStep = pRTCtrlprogram->programStep( progStep++ );
     pRTCtrlStep->opCode.write( rtctrlProgWaitClocks );
     pRTCtrlStep->clocks_us.write( frametime_us - TRIGGER_PULSE_WIDTH_us );
 

@@ -10,5 +10,11 @@ Just note that we need to download the [x64 msi](https://www.matrix-vision.com/U
 Open the application wxPropView which is just installed, and try to capture a few images.
 See also Section 1.11 of the mvBluefox technical manual.
 
-## 3. Build the visual studio project to capture images and save to an AVI file. 
+## 3. Build the visual studio project SequenceCapture which captures images into memory and then save to an AVI file.
+
 You may build it in the latest visual C++ IDE.
+Then run the program with
+```
+SequenceCapture of=myfile.avi frameRate=25 et=5000 pc=40 bf=1500
+```
+Depending on the exposure time and pixel clock, the tenable frame rate may fall below 25 FPS.

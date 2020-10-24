@@ -7,6 +7,7 @@
 #include <process.h>
 #include <conio.h>
 #include <iostream>
+#include <fstream>
 #include <mvIMPACT_CPP/mvIMPACT_acquire.h>
 #include <mvDisplay/Include/mvIMPACT_acquire_display.h>
 #include <apps/Common/exampleHelper.h>
@@ -25,8 +26,12 @@ struct ThreadParameter
     Device*             pDev;
     ImageDisplayWindow  displayWindow;
     AVIWrapper*         pAVIWrapper;
-    ThreadParameter( Device* p, std::string& windowTitle, AVIWrapper* pAVI )
-        : pDev( p ), displayWindow( windowTitle ), pAVIWrapper( pAVI ) {}
+    unsigned int        requestsCaptured;
+    Statistics          statistics;
+    ofstream*           pFrameInfoStream;
+    ThreadParameter( Device* p, std::string& windowTitle, AVIWrapper* pAVI, ofstream* metadataStream )
+        : pDev( p ), displayWindow( windowTitle ), pAVIWrapper( pAVI ), 
+        requestsCaptured( 0u ), statistics( p ), pFrameInfoStream( metadataStream ) {}
 };
 
 //-----------------------------------------------------------------------------
@@ -37,10 +42,11 @@ void displayCommandLineOptions( void )
          << "  'outputFile' or 'of' to specify the name of the resulting AVI file" << endl
          << "  'frameRate' or 'fr' to specify the frame rate(frames per second for playback) of the resulting AVI file" << endl
          << "  'recordingTime' or 'rt' to specify the time in ms the sample shall capture image data. If this parameter" << endl
-         << "    is omitted, the capture process will be aborted after the user pressed a key" << endl
-         << endl
+         << "    is omitted, the capture process will be aborted after the user pressed a key." << endl
+         << "  'exposureTime' or 'et' to specify the exposure time in us which is 5000us by default." << endl
+         << "  'pixelClock' or 'pc' to specify the pixel clock in MHz which is 40 MHz by default." << endl
          << "USAGE EXAMPLE:" << endl
-         << "  ContinuousCaptureToAVIFile rt=5000 of=myfile.avi frameRate=25" << endl << endl;
+         << "  ContinuousCaptureToAVIFile rt=5000 of=myfile.avi frameRate=25 et=5000 pc=40" << endl << endl;
 }
 
 //-----------------------------------------------------------------------------
@@ -66,7 +72,7 @@ void inplaceHorizontalMirror( void* pData, int height, size_t pitch )
 //-----------------------------------------------------------------------------
 // Currently only the mvBlueFOX supports HRTC and thus the definition of an
 // absolute frame rate during the capture process.
-void setupBlueFOXFrameRate( Device* pDev, int frameRate_Hz )
+void setupBlueFOXFrameRate( Device* pDev, int frameRate_Hz, unsigned int exposureTimeUs, unsigned int pixelClockMHz)
 //-----------------------------------------------------------------------------
 {
     cout << "To use the HRTC to configure the mvBlueFOX to capture with a defined frequency press 'y'." << endl;
@@ -87,13 +93,41 @@ void setupBlueFOXFrameRate( Device* pDev, int frameRate_Hz )
     }
 
     CameraSettingsBlueFOX bfs( pDev );
-    if( bfs.expose_us.read() > frametime_us / 2 )
-    {
-        ostringstream oss;
-        oss << "Reducing frame-time from " << bfs.expose_us.read() << " us to " << frametime_us / 2 << " us." << endl
-            << "Higher values are possible but require a more sophisticated HRTC program" << endl;
-        bfs.expose_us.write( frametime_us / 2 );
+
+    bfs.autoExposeControl.write(aecOff);
+    bfs.expose_us.write(exposureTimeUs); // adjust exposure time according to user input.
+    //if( bfs.expose_us.read() > frametime_us / 2 )
+    //{
+    //    ostringstream oss;
+    //    oss << "Reducing frame-time from " << bfs.expose_us.read() << " us to " << frametime_us / 2 << " us." << endl
+    //        << "Higher values are possible but require a more sophisticated HRTC program" << endl;
+    //    bfs.expose_us.write( frametime_us / 2 );
+    //}
+    mvIMPACT::acquire::TCameraPixelClock clockFrequencyMHz = 
+        mvIMPACT::acquire::TCameraPixelClock::cpc40000KHz;
+    switch (pixelClockMHz) {
+    case 12:
+        clockFrequencyMHz =
+            mvIMPACT::acquire::TCameraPixelClock::cpc12000KHz;
+        break;
+    case 20:
+        clockFrequencyMHz =
+            mvIMPACT::acquire::TCameraPixelClock::cpc20000KHz;
+        break;
+    case 32:
+        clockFrequencyMHz =
+            mvIMPACT::acquire::TCameraPixelClock::cpc32000KHz;
+        break;
+    case 40:
+        clockFrequencyMHz =
+            mvIMPACT::acquire::TCameraPixelClock::cpc40000KHz;
+        break;
+    default:
+        break;
     }
+    bfs.pixelClock_KHz.write(clockFrequencyMHz);
+    cout << "Current pixel clock kHz selection: " << bfs.pixelClock_KHz.readS() 
+        << " and the line delay clk: " << bfs.lineDelay_clk.read() << endl;
 
     IOSubSystemBlueFOX bfIOs( pDev );
     // define a HRTC program that results in a define image frequency
@@ -101,7 +135,13 @@ void setupBlueFOXFrameRate( Device* pDev, int frameRate_Hz )
     bfs.triggerSource.write( ctsRTCtrl );
     // when the hardware real time controller switches the trigger signal to
     // high the exposure of the image shall start
-    bfs.triggerMode.write( ctmOnRisingEdge );
+    bfs.triggerMode.write( ctmContinuous ); // The mode was ctmOnRisingEdge 
+    // which caused writing exception with mvBlueFox MLC202DG.
+    // In release mode with compression, the maximum FPS of 
+    // ContinuousCaptureToAVIFile is a bit more than 10.
+    // In comparison, SequenceCapture project uses a RequestProvider
+    // instead of FunctionInterface for generating requests.
+    // RequestProvider uses FunctionInterface internally.
 
     // error checks
     if( bfIOs.RTCtrProgramCount() == 0 )
@@ -157,7 +197,7 @@ void setupBlueFOXFrameRate( Device* pDev, int frameRate_Hz )
 }
 
 //-----------------------------------------------------------------------------
-void storeImageToStream( FunctionInterface& fi, int requestNr, AVIWrapper* pAVIWrapper )
+void storeImageToStream( FunctionInterface& fi, int requestNr, AVIWrapper* pAVIWrapper, ofstream* frameInfo )
 //-----------------------------------------------------------------------------
 {
     if( fi.isRequestNrValid( requestNr ) )
@@ -175,6 +215,9 @@ void storeImageToStream( FunctionInterface& fi, int requestNr, AVIWrapper* pAVIW
                 // this function only works for image formats where each channel has the same line pitch!
                 inplaceHorizontalMirror( pRequest->imageData.read(), pRequest->imageHeight.read(), pRequest->imageLinePitch.read() );
                 pAVIWrapper->SaveDataToAVIStream( reinterpret_cast<unsigned char*>( pRequest->imageData.read() ), pRequest->imageSize.read() );
+                *frameInfo << pRequest->getNumber() << "," << pRequest->infoTimeStamp_us.read()
+                    << "," << pRequest->infoExposeStart_us.read() << "," << pRequest->infoExposeTime_us.read()
+                    << "," << pRequest->infoFrameNr.read() << endl;
             }
             catch( const AVIException& e )
             {
@@ -237,7 +280,18 @@ unsigned int __stdcall liveThread( void* pData )
             // As images might be redrawn by the display window, we can't process the image currently
             // displayed. In order not to copy the current image, which would cause additional CPU load
             // we will flip and store the previous image if available
-            storeImageToStream( fi, lastRequestNr, pThreadParameter->pAVIWrapper );
+            storeImageToStream( fi, lastRequestNr, pThreadParameter->pAVIWrapper, pThreadParameter->pFrameInfoStream );
+            ++pThreadParameter->requestsCaptured;
+            // display some statistical information every 100th image
+            if (pThreadParameter->requestsCaptured % 50 == 0)
+            {
+                const Statistics& s = pThreadParameter->statistics;
+                cout << "Info from " << pThreadParameter->pDev->serial.read()
+                    << ": " << s.framesPerSecond.name() << ": " << s.framesPerSecond.readS()
+                    << ", " << s.errorCount.name() << ": " << s.errorCount.readS()
+                    << ", " << s.captureTime_s.name() << ": " << s.captureTime_s.readS() << endl;
+            }
+
             if( fi.isRequestNrValid( lastRequestNr ) )
             {
                 // this image has been displayed thus the buffer is no longer needed...
@@ -268,7 +322,7 @@ unsigned int __stdcall liveThread( void* pData )
     // stop the display from showing freed memory
     display.RemoveImage();
     // try to store the last image into the stream
-    storeImageToStream( fi, requestNr, pThreadParameter->pAVIWrapper );
+    storeImageToStream( fi, requestNr, pThreadParameter->pAVIWrapper, pThreadParameter->pFrameInfoStream );
     // In this sample all the next lines are redundant as the device driver will be
     // closed now, but in a real world application a thread like this might be started
     // several times an then it becomes crucial to clean up correctly.
@@ -297,8 +351,11 @@ int main( int argc, char* argv[] )
 
     // default parameters
     string fileName( ".\\output.avi" );
+    string infoFilename( ".\\output.txt" );
     unsigned int frameRate = 25;
     unsigned int recordingTime = 0;
+    unsigned int exposureTimeUs = 5000;
+    unsigned int pixelClockMHz = 40;
     bool boInvalidCommandLineParameterDetected = false;
     // scan command line
     if( argc > 1 )
@@ -327,6 +384,14 @@ int main( int argc, char* argv[] )
                 else if( ( key == "recordingTime" ) || ( key == "rt" ) )
                 {
                     recordingTime = static_cast<unsigned int>( atoi( value.c_str() ) );
+                }
+                else if ((key == "exposureTime") || (key == "et"))
+                {
+                    exposureTimeUs = static_cast<unsigned int>(atoi(value.c_str()));
+                }
+                else if ((key == "pixelClock") || (key == "pc"))
+                {
+                    pixelClockMHz = static_cast<unsigned int>(atoi(value.c_str()));
                 }
                 else
                 {
@@ -399,7 +464,7 @@ int main( int argc, char* argv[] )
 
     if( pDev->family.read() == "mvBlueFOX" )
     {
-        setupBlueFOXFrameRate( pDev, frameRate );
+        setupBlueFOXFrameRate( pDev, frameRate, exposureTimeUs, pixelClockMHz );
     }
 
     // Now we have to create and configure the AVI stream
@@ -423,7 +488,12 @@ int main( int argc, char* argv[] )
         string windowTitle( "mvIMPACT_acquire sample, Device " + pDev->serial.read() );
         // initialise display window
         // IMPORTANT: It's NOT safe to create multiple display windows in multiple threads!!!
-        ThreadParameter threadParam( pDev, windowTitle, &myAVIWrapper );
+        infoFilename = fileName.substr(0, fileName.length() - 3) + "txt";
+        cout << "Saving frame info to " << infoFilename << endl;
+        ofstream infoStream( infoFilename.c_str(), ofstream::out );
+        infoStream << "%RequestNumber,infoTimeStamp_us,infoExposeStart_us,"
+            "infoExposeTime_us,infoFrameNr\n";
+        ThreadParameter threadParam( pDev, windowTitle, &myAVIWrapper, &infoStream );
         HANDLE hThread = ( HANDLE )_beginthreadex( 0, 0, liveThread, ( LPVOID )( &threadParam ), 0, &dwThreadID );
         if( recordingTime == 0 )
         {
@@ -446,6 +516,7 @@ int main( int argc, char* argv[] )
             cout << "Press any key to end the application" << endl;
             return _getch();
         }
+        infoStream.close();
     }
     catch( const AVIException& e )
     {

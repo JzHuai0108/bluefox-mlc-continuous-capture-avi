@@ -557,7 +557,7 @@ int main(int argc, char* argv[])
     infoFilename = fileName.substr(0, fileName.length() - 3) + "txt";
     cout << "Saving frame info to " << infoFilename << endl;
     ofstream infoStream(infoFilename.c_str(), ofstream::out);
-    infoStream << "%RequestNumber,infoTimeStamp_us,infoExposeStart_us,"
+    infoStream << "%infoTimeStamp_ns,infoExposeStart_us,"
         "infoExposeTime_us,infoFrameNr\n";
     cout << "Image queue size " << qSize << " frame info list size " << frameInfoList.size() << endl;
     // we should have a valid AVI stream by now thus we can start to write the images to it
@@ -569,8 +569,8 @@ int main(int argc, char* argv[])
         inplaceHorizontalMirror( pIB );
         pAVIWrapper->SaveDataToAVIStream( reinterpret_cast<unsigned char*>( pIB->vpData ), pIB->iSize );
         const FrameInfo& fi = frameInfoList[x];
-        infoStream << fi.requestNumber << "," << fi.infoTimeStamp_us
-            << "," << fi.infoExposeStart_us << "," << fi.infoExposeTime_us
+        infoStream << fi.infoTimeStamp_us
+            << "000," << fi.infoExposeStart_us << "," << fi.infoExposeTime_us
             << "," << fi.infoFrameNr << "\n";
     }
     return 0;

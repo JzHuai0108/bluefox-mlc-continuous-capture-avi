@@ -460,6 +460,8 @@ int main(int argc, char* argv[])
     // will NOT access the queue from multiple threads at the same time!
     deque<FrameInfo> frameInfoList;
     ThreadParameter threadParam( pDev, imageQueue, maxQueueSize, frameRate, frameInfoList );
+    ImageDisplay& display = threadParam.getDisplayWindow().GetImageDisplay();
+    display.SetDisplayMode(mvIMPACT::acquire::display::DM_Default);
     requestProvider.acquisitionStart( myThreadCallback, std::ref( threadParam ) );
     if( _getch() == EOF )
     {
@@ -497,12 +499,12 @@ int main(int argc, char* argv[])
         // delay between two image during display
         const DWORD frameDelay = ( threadParam.getFrameRate() > 0 ) ? 1000 / threadParam.getFrameRate() : 40;
         // obtain pointer to display structure
-        ImageDisplay& display = threadParam.getDisplayWindow().GetImageDisplay();
+        ImageDisplay& replayDisplay = threadParam.getDisplayWindow().GetImageDisplay();
         cout << "Replaying the last " << qSize << " captured images with " <<  1000 / frameDelay << " Hz..." << endl;
         for( const auto& imageBufferDescriptor : imageQueue )
         {
-            display.SetImage( imageBufferDescriptor.getBuffer() );
-            display.Update();
+            replayDisplay.SetImage( imageBufferDescriptor.getBuffer() );
+            replayDisplay.Update();
             this_thread::sleep_for( chrono::milliseconds( frameDelay ) );
         }
     }

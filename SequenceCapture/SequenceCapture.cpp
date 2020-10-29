@@ -359,7 +359,8 @@ int main(int argc, char* argv[])
     unsigned int frameRate = 25u;
     unsigned int exposureTimeUs = 5000u;
     unsigned int pixelClockMHz = 40u;
-    unsigned int bufferFrames = 25u * 60u;
+    unsigned int maxAviFrames = 1150u; // AVI file max size = 4GB = 4 * 1024^3 > maxAviFrames * 3 * 1280 * 960.
+    unsigned int bufferFrames = maxAviFrames;
     unsigned int replay = 0u;
     bool boInvalidCommandLineParameterDetected = false;
     // scan command line
@@ -397,6 +398,10 @@ int main(int argc, char* argv[])
                 else if ((key == "bufferFrames") || (key == "bf"))
                 {
                     bufferFrames = static_cast<unsigned int>(atoi(value.c_str()));
+                    if (bufferFrames > maxAviFrames) {
+                        cerr << "One avi file keeps at most " << maxAviFrames << " 3-channel RGB frames!\n";
+                        bufferFrames = maxAviFrames;
+                    }
                 }
                 else if ((key == "replay") || (key == "rp"))
                 {

@@ -45,13 +45,15 @@ class ThreadParameter
     ImageQueue::size_type   maxQueueSize_;
     int                     frameRate_;
     deque<FrameInfo>&       frameInfoQueue_;
+    int                     cullStartFrames_;
 
 public:
-    ThreadParameter( Device* p, ImageQueue& q, ImageQueue::size_type maxSize, int fr, deque<FrameInfo>& frameInfoList )
+    ThreadParameter( Device* p, ImageQueue& q, ImageQueue::size_type maxSize, int fr,
+        deque<FrameInfo>& frameInfoList, int cullStartFrames)
         : pDev_( p ), requestsCaptured_( 0 ), statistics_( p ), 
         displayWindow_( "mvIMPACT_acquire sample, Device " + p->serial.read() ), 
         imageQueue_( q ), maxQueueSize_( maxSize ), frameRate_( fr ),
-        frameInfoQueue_(frameInfoList) {}
+        frameInfoQueue_(frameInfoList), cullStartFrames_(cullStartFrames) {}
 
     ThreadParameter( const ThreadParameter& src ) = delete;
     ThreadParameter& operator=( const ThreadParameter& rhs ) = delete;
@@ -95,6 +97,13 @@ public:
     {
         return maxQueueSize_;
     }
+    int cullStartFrames(void) const
+    {
+        return cullStartFrames_;
+    }
+    int decreaseCullStartFrames(void) {
+        return --cullStartFrames_;
+    }
 };
 
 //-----------------------------------------------------------------------------
@@ -108,6 +117,8 @@ void displayCommandLineOptions(void)
         << "  'pixelClock' or 'pc' to specify the pixel clock in MHz which is 40 MHz by default." << endl
         << "  'bufferFrames' or 'bf' to specify maximum number of buffered frames in memory which is 1500 by default." << endl
         << "  'replay' or 'rp' to specify whether to replay after the capture which is 0 by default." << endl
+        << "  'cullStartFrames' or 'cs' to specify the number of the beginning"
+        << " frames to discard which is 7 by default." << endl
         << "USAGE EXAMPLE:" << endl
         << "  SequenceCapture of=myfile.avi frameRate=25 et=5000 pc=40 bf=1500" << endl << endl;
 }
@@ -266,21 +277,25 @@ void setupBlueFOXFrameRate(Device* pDev, int frameRate_Hz, unsigned int exposure
 }
 
 //-----------------------------------------------------------------------------
-void myThreadCallback( shared_ptr<Request> pRequest, ThreadParameter& threadParameter )
+void myThreadCallback(shared_ptr<Request> pRequest, ThreadParameter& threadParameter)
 //-----------------------------------------------------------------------------
 {
     threadParameter.incRequestsCaptured();
     // display some statistical information every 100th image
-    if( threadParameter.getRequestsCaptured() % 100 == 0 )
+    if (threadParameter.getRequestsCaptured() % 100 == 0)
     {
         const Statistics& s = threadParameter.getStatistics();
         cout << "Info from " << threadParameter.getDevice()->serial.read()
-             << ": " << s.framesPerSecond.name() << ": " << s.framesPerSecond.readS()
-             << ", " << s.errorCount.name() << ": " << s.errorCount.readS()
-             << ", " << s.captureTime_s.name() << ": " << s.captureTime_s.readS() << endl;
+            << ": " << s.framesPerSecond.name() << ": " << s.framesPerSecond.readS()
+            << ", " << s.errorCount.name() << ": " << s.errorCount.readS()
+            << ", " << s.captureTime_s.name() << ": " << s.captureTime_s.readS() << endl;
     }
-    if( pRequest->isOK() )
+    if (pRequest->isOK())
     {
+        if (threadParameter.cullStartFrames() > 0) {
+            threadParameter.decreaseCullStartFrames();
+            return;
+        }
         threadParameter.getDisplayWindow().GetImageDisplay().SetImage( pRequest );
         threadParameter.getDisplayWindow().GetImageDisplay().Update();
         // append a new image at the end of the queue (the image will be deep-copied)
@@ -361,6 +376,7 @@ int main(int argc, char* argv[])
     unsigned int pixelClockMHz = 40u;
     unsigned int maxAviFrames = 1150u; // AVI file max size = 4GB = 4 * 1024^3 > maxAviFrames * 3 * 1280 * 960.
     unsigned int bufferFrames = maxAviFrames;
+    int cullStartFrames = 7;
     unsigned int replay = 0u;
     bool boInvalidCommandLineParameterDetected = false;
     // scan command line
@@ -402,6 +418,10 @@ int main(int argc, char* argv[])
                         cerr << "One avi file keeps at most " << maxAviFrames << " 3-channel RGB frames!\n";
                         bufferFrames = maxAviFrames;
                     }
+                }
+                else if ((key == "cullStartFrames") || (key == "cs"))
+                {
+                    cullStartFrames = atoi(value.c_str());
                 }
                 else if ((key == "replay") || (key == "rp"))
                 {
@@ -464,7 +484,7 @@ int main(int argc, char* argv[])
     // mechanisms (e.g. critical sections) must be used. Here we don't care about that as we
     // will NOT access the queue from multiple threads at the same time!
     deque<FrameInfo> frameInfoList;
-    ThreadParameter threadParam( pDev, imageQueue, maxQueueSize, frameRate, frameInfoList );
+    ThreadParameter threadParam( pDev, imageQueue, maxQueueSize, frameRate, frameInfoList, cullStartFrames );
     ImageDisplay& display = threadParam.getDisplayWindow().GetImageDisplay();
     display.SetDisplayMode(mvIMPACT::acquire::display::DM_Default);
     requestProvider.acquisitionStart( myThreadCallback, std::ref( threadParam ) );

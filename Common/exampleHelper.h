@@ -379,7 +379,12 @@ int match( const std::basic_string<_Elem, _Traits, _Ax>& searchString, const std
 typedef bool( *SUPPORTED_DEVICE_CHECK )( const mvIMPACT::acquire::Device* const );
 
 //-----------------------------------------------------------------------------
-inline mvIMPACT::acquire::Device* getDeviceFromUserInput( const mvIMPACT::acquire::DeviceManager& devMgr, SUPPORTED_DEVICE_CHECK pSupportedDeviceCheckFn = 0, bool boSilent = false, bool boAutomaticallyUseGenICamInterface = true )
+inline mvIMPACT::acquire::Device* getDeviceFromUserInput(
+    const mvIMPACT::acquire::DeviceManager& devMgr, 
+    SUPPORTED_DEVICE_CHECK pSupportedDeviceCheckFn = 0, 
+    bool boSilent = false, 
+    bool boAutomaticallyUseGenICamInterface = true, 
+    int defaultDeviceNumber = -1)
 //-----------------------------------------------------------------------------
 {
     const unsigned int devCnt = devMgr.deviceCount();
@@ -445,12 +450,17 @@ inline mvIMPACT::acquire::Device* getDeviceFromUserInput( const mvIMPACT::acquir
         return 0;
     }
 
-    // get user input
-    std::cout << std::endl << "Please enter the number in front of the listed device followed by [ENTER] to open it: ";
+    bool userChooseDevice = defaultDeviceNumber < 0;
     unsigned int devNr = 0;
-    std::cin >> devNr;
-    // remove the '\n' from the stream
-    std::cin.get();
+    if (userChooseDevice) {
+        std::cout << std::endl << "Please enter the number in front of the listed device followed by [ENTER] to open it: ";
+        std::cin >> devNr;
+        // remove the '\n' from the stream
+        std::cin.get();
+    }
+    else {
+        devNr = defaultDeviceNumber;
+    }
 
     if( validDeviceNumbers.find( devNr ) == validDeviceNumbers.end() )
     {

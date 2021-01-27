@@ -2,8 +2,9 @@
 #include <deque>
 #include <fstream>
 #include <iostream>
+#include <iomanip>
 #include <apps/Common/aviwrapper.h>
-#include <apps/Common/exampleHelper.h>
+#include "../Common/exampleHelper.h"
 #include <mvDisplay/Include/mvIMPACT_acquire_display.h>
 #include <mvIMPACT_CPP/mvIMPACT_acquire_helper.h>
 
@@ -360,7 +361,7 @@ int main(int argc, char* argv[])
 //-----------------------------------------------------------------------------
 {
     DeviceManager devMgr;
-    Device* pDev = getDeviceFromUserInput( devMgr );
+    Device* pDev = getDeviceFromUserInput( devMgr, 0, false, true, 0);
     if( pDev == nullptr )
     {
         cout << "Could not obtain a valid pointer to a device. Unable to continue! Press any key to end the program." << endl;

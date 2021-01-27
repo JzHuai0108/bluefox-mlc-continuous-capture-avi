@@ -20,17 +20,19 @@ struct FrameInfo {
     int infoExposeStart_us;
     int infoExposeTime_us;
     int64_t infoFrameNr;
+    double unixTime; // unix time in seconds.
 
 	FrameInfo(int _requestNumber,
 		int64_t _infoTimeStamp_us,
 		int _infoExposeStart_us,
 		int _infoExposeTime_us,
-		int64_t _infoFrameNr) :
+		int64_t _infoFrameNr, 
+        double _unixTime) :
 		requestNumber(_requestNumber),
 		infoTimeStamp_us(_infoTimeStamp_us),
 		infoExposeStart_us(_infoExposeStart_us),
 		infoExposeTime_us(_infoExposeTime_us),
-		infoFrameNr(_infoFrameNr) {
+		infoFrameNr(_infoFrameNr), unixTime(_unixTime) {
 	}
 };
 
@@ -277,6 +279,37 @@ void setupBlueFOXFrameRate(Device* pDev, int frameRate_Hz, unsigned int exposure
     // images at this frequency.
 }
 
+// https://stackoverflow.com/questions/20370920/convert-current-time-from-windows-to-unix-timestamp-in-c-or-c
+// https://zetcode.com/gui/winapi/datetime/
+// For c++ 11, this may equivalently achieved by time(&timer), 
+// but it may have an accuracy up to seconds.
+// see http://www.cplusplus.com/reference/ctime/time/
+int64_t GetSystemTimeAsUnixTime()
+{
+    // Unix time is the number of seconds since unix epoch January 1, 1970 12:00am UTC.
+    // The Windows API epoch is January 1, 1601, 00:00:00 UTC.
+    const int64_t UNIX_TIME_START = 11644473600LL; // Unix epoch in terms of Windows API epoch in seconds.
+    const int64_t TICKS_PER_MICROSECOND = 10; //a tick is 100ns
+    const int64_t TICKS_PER_SECOND = 10000000;
+
+    FILETIME ft;
+    GetSystemTimeAsFileTime(&ft); //returns ticks in UTC
+
+    //Copy the low and high parts of FILETIME into a LARGE_INTEGER
+    //This is so we can access the full 64-bits as an Int64 without causing an alignment fault
+    LARGE_INTEGER li;
+    li.LowPart = ft.dwLowDateTime;
+    li.HighPart = ft.dwHighDateTime;
+
+    //Convert ticks since 1/1/1970 into seconds
+    return (li.QuadPart - UNIX_TIME_START * TICKS_PER_SECOND) / TICKS_PER_MICROSECOND;
+}
+
+double microSecToSec(int64_t timeMicros) {
+    int64_t microInSec = 1000000;
+    return (double)(timeMicros / microInSec) + (double)(timeMicros % microInSec) / (double)microInSec;
+}
+
 //-----------------------------------------------------------------------------
 void myThreadCallback(shared_ptr<Request> pRequest, ThreadParameter& threadParameter)
 //-----------------------------------------------------------------------------
@@ -297,13 +330,15 @@ void myThreadCallback(shared_ptr<Request> pRequest, ThreadParameter& threadParam
             threadParameter.decreaseCullStartFrames();
             return;
         }
+        double unixSecs = microSecToSec(GetSystemTimeAsUnixTime());
+
         threadParameter.getDisplayWindow().GetImageDisplay().SetImage( pRequest );
         threadParameter.getDisplayWindow().GetImageDisplay().Update();
         // append a new image at the end of the queue (the image will be deep-copied)
-        threadParameter.getImageQueue().push_back( pRequest->getImageBufferDesc().clone() );
+        threadParameter.getImageQueue().push_back( pRequest->getImageBufferDesc().clone());
 		threadParameter.getFrameInfoList().emplace_back(pRequest->getNumber(), 
             pRequest->infoTimeStamp_us.read(), pRequest->infoExposeStart_us.read(), 
-            pRequest->infoExposeTime_us.read(), pRequest->infoFrameNr.read());
+            pRequest->infoExposeTime_us.read(), pRequest->infoFrameNr.read(), unixSecs);
 
         // if the queue has the user defined max. number of entries remove the oldest one
         // with this method we always keep the most recent images
@@ -380,6 +415,9 @@ int main(int argc, char* argv[])
     int cullStartFrames = 7;
     unsigned int replay = 0u;
     bool boInvalidCommandLineParameterDetected = false;
+ 
+    std::time_t startRecordTime;
+
     // scan command line
     if (argc > 1)
     {
@@ -488,6 +526,9 @@ int main(int argc, char* argv[])
     ThreadParameter threadParam( pDev, imageQueue, maxQueueSize, frameRate, frameInfoList, cullStartFrames );
     ImageDisplay& display = threadParam.getDisplayWindow().GetImageDisplay();
     display.SetDisplayMode(mvIMPACT::acquire::display::DM_Default);
+    auto startRecordUnixTime = std::chrono::system_clock::now();
+    startRecordTime = std::chrono::system_clock::to_time_t(startRecordUnixTime);
+    
     requestProvider.acquisitionStart( myThreadCallback, std::ref( threadParam ) );
     if( _getch() == EOF )
     {
@@ -586,8 +627,11 @@ int main(int argc, char* argv[])
     cout << "Saving frame info to " << infoFilename << endl;
     ofstream infoStream(infoFilename.c_str(), ofstream::out);
     infoStream << "%infoTimeStamp_ns,infoExposeStart_us,"
-        "infoExposeTime_us,infoFrameNr\n";
+        "infoExposeTime_us,infoFrameNr,unixTime_s\n";
+    infoStream << "%Start record time in unix time " << (intmax_t)startRecordTime
+        << " sec, local time " << std::ctime(&startRecordTime);
     cout << "Image queue size " << qSize << " frame info list size " << frameInfoList.size() << endl;
+    
     // we should have a valid AVI stream by now thus we can start to write the images to it
     for( ImageQueue::size_type x = 0; x < qSize; x++ )
     {
@@ -599,7 +643,8 @@ int main(int argc, char* argv[])
         const FrameInfo& fi = frameInfoList[x];
         infoStream << fi.infoTimeStamp_us
             << "000," << fi.infoExposeStart_us << "," << fi.infoExposeTime_us
-            << "," << fi.infoFrameNr << "\n";
+            << "," << fi.infoFrameNr << "," << std::fixed << std::setprecision(8)
+            << fi.unixTime << "\n";
     }
     return 0;
 }

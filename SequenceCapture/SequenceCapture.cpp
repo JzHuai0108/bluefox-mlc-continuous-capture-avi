@@ -322,7 +322,8 @@ void myThreadCallback(shared_ptr<Request> pRequest, ThreadParameter& threadParam
         cout << "Info from " << threadParameter.getDevice()->serial.read()
             << ": " << s.framesPerSecond.name() << ": " << s.framesPerSecond.readS()
             << ", " << s.errorCount.name() << ": " << s.errorCount.readS()
-            << ", " << s.captureTime_s.name() << ": " << s.captureTime_s.readS() << endl;
+            << ", " << s.captureTime_s.name() << ": " << s.captureTime_s.readS() 
+            << ", #buffered images: " << threadParameter.getImageQueue().size() << endl;
     }
     if (pRequest->isOK())
     {
